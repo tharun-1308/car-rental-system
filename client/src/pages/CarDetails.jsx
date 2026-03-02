@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft, User, CheckCircle, AlertCircle, Users, Gauge, Fuel, Droplets, Car } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
+import { ArrowLeft, User, CheckCircle, AlertCircle, Users, Gauge, Fuel, Droplets, Car, Star, Send } from 'lucide-react';
 
 const CarDetails = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { showToast } = useToast();
 
     const [car, setCar] = useState(null);
     const [booking, setBooking] = useState({
@@ -18,6 +20,13 @@ const CarDetails = () => {
     const [submitting, setSubmitting] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState('');
+
+    // Reviews state
+    const [reviews, setReviews] = useState([]);
+    const [reviewRating, setReviewRating] = useState(0);
+    const [hoverRating, setHoverRating] = useState(0);
+    const [reviewComment, setReviewComment] = useState('');
+    const [submittingReview, setSubmittingReview] = useState(false);
 
     useEffect(() => {
         fetch(`http://localhost:3001/api/cars/${id}`)
@@ -33,6 +42,12 @@ const CarDetails = () => {
                 console.error('Error fetching car:', err);
                 setLoading(false);
             });
+
+        // Fetch reviews
+        fetch(`http://localhost:3001/api/reviews/${id}`)
+            .then(res => res.json())
+            .then(data => setReviews(data))
+            .catch(err => console.error('Error fetching reviews:', err));
     }, [id]);
 
     const calculateTotal = () => {
@@ -67,11 +82,13 @@ const CarDetails = () => {
         const dateError = validateDates();
         if (dateError) {
             setError(dateError);
+            showToast(dateError, 'error');
             return;
         }
 
         if (calculateTotal() <= 0) {
             setError("Invalid booking duration.");
+            showToast("Invalid booking duration.", 'error');
             return;
         }
 
@@ -79,7 +96,6 @@ const CarDetails = () => {
 
         try {
             const token = localStorage.getItem('token');
-            console.log('Sending token for booking:', token);
             const response = await fetch('http://localhost:3001/api/bookings', {
                 method: 'POST',
                 headers: {
@@ -104,6 +120,7 @@ const CarDetails = () => {
 
             if (response.ok) {
                 setSuccess(true);
+                showToast('Booking confirmed! Redirecting to payment...', 'success');
                 setTimeout(() => navigate('/payment', {
                     state: {
                         bookingData: { ...booking, carId: car.id, totalPrice: calculateTotal() },
@@ -116,9 +133,79 @@ const CarDetails = () => {
         } catch (error) {
             console.error('Error creating booking:', error);
             setError(error.message);
+            showToast(error.message, 'error');
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleReviewSubmit = async (e) => {
+        e.preventDefault();
+        if (!user) {
+            showToast('Please login to submit a review', 'error');
+            return navigate('/login');
+        }
+        if (reviewRating === 0) {
+            showToast('Please select a star rating', 'error');
+            return;
+        }
+
+        setSubmittingReview(true);
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch('http://localhost:3001/api/reviews', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    carId: parseInt(id),
+                    rating: reviewRating,
+                    comment: reviewComment
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                showToast(data.message, 'success');
+                // Refresh reviews
+                const res = await fetch(`http://localhost:3001/api/reviews/${id}`);
+                const updatedReviews = await res.json();
+                setReviews(updatedReviews);
+                setReviewRating(0);
+                setReviewComment('');
+                // Refresh car data for updated rating
+                const carRes = await fetch(`http://localhost:3001/api/cars/${id}`);
+                const carData = await carRes.json();
+                setCar(carData);
+            } else {
+                showToast(data.error || 'Failed to submit review', 'error');
+            }
+        } catch (err) {
+            showToast('Error submitting review', 'error');
+        } finally {
+            setSubmittingReview(false);
+        }
+    };
+
+    const renderStars = (rating, size = 16, interactive = false) => {
+        return (
+            <div style={{ display: 'flex', gap: '0.2rem' }}>
+                {[1, 2, 3, 4, 5].map(star => (
+                    <Star
+                        key={star}
+                        size={size}
+                        fill={star <= (interactive ? (hoverRating || reviewRating) : rating) ? '#f59e0b' : 'transparent'}
+                        color={star <= (interactive ? (hoverRating || reviewRating) : rating) ? '#f59e0b' : 'var(--text-secondary)'}
+                        style={interactive ? { cursor: 'pointer', transition: 'transform 0.15s' } : {}}
+                        onClick={interactive ? () => setReviewRating(star) : undefined}
+                        onMouseEnter={interactive ? () => setHoverRating(star) : undefined}
+                        onMouseLeave={interactive ? () => setHoverRating(0) : undefined}
+                    />
+                ))}
+            </div>
+        );
     };
 
     if (loading) return <div className="container" style={{ paddingTop: '4rem', textAlign: 'center' }}>Loading...</div>;
@@ -134,7 +221,16 @@ const CarDetails = () => {
                 <div>
                     <img src={car.image} alt={car.model} style={{ width: '100%', borderRadius: 'var(--card-radius)', marginBottom: '2rem', border: '1px solid var(--glass-border)' }} />
                     <h1 style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>{car.make} {car.model}</h1>
-                    <p style={{ color: 'var(--accent)', fontSize: '1.5rem', fontWeight: '600', marginBottom: '1.5rem' }}>₹{car.pricePerDay}/day</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                        <p style={{ color: 'var(--accent)', fontSize: '1.5rem', fontWeight: '600', margin: 0 }}>₹{car.pricePerDay}/day</p>
+                        {car.reviewCount > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(245, 158, 11, 0.1)', padding: '0.3rem 0.8rem', borderRadius: '2rem', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+                                <Star size={14} fill="#f59e0b" color="#f59e0b" />
+                                <span style={{ fontWeight: '600', color: '#f59e0b' }}>{car.avgRating}</span>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>({car.reviewCount})</span>
+                            </div>
+                        )}
+                    </div>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', lineHeight: '1.8', marginBottom: '2.5rem' }}>{car.description}</p>
 
                     <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', display: 'inline-block', paddingBottom: '0.25rem' }}>Car Specifications</h3>
@@ -167,6 +263,80 @@ const CarDetails = () => {
                             </div>
                         </div>
                     </div>
+
+                    {/* Reviews Section */}
+                    <div style={{ marginTop: '3rem' }}>
+                        <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', display: 'inline-block', paddingBottom: '0.25rem' }}>
+                            Reviews & Ratings
+                        </h3>
+
+                        {/* Review Form */}
+                        <form onSubmit={handleReviewSubmit} className="review-form" style={{
+                            background: 'var(--bg-secondary)', padding: '1.5rem', borderRadius: '1rem',
+                            border: '1px solid var(--glass-border)', marginBottom: '2rem', marginTop: '1rem'
+                        }}>
+                            <h4 style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Write a Review</h4>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Your Rating</label>
+                                {renderStars(reviewRating, 24, true)}
+                            </div>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <textarea
+                                    className="form-input"
+                                    placeholder="Share your experience with this car..."
+                                    rows="3"
+                                    value={reviewComment}
+                                    onChange={e => setReviewComment(e.target.value)}
+                                    style={{ resize: 'vertical', minHeight: '80px' }}
+                                />
+                            </div>
+                            <button type="submit" className="btn btn-primary" disabled={submittingReview || !user}
+                                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: user ? 1 : 0.5 }}>
+                                <Send size={16} />
+                                {submittingReview ? 'Submitting...' : 'Submit Review'}
+                            </button>
+                            {!user && <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Please login to submit a review</p>}
+                        </form>
+
+                        {/* Reviews List */}
+                        {reviews.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {reviews.map(review => (
+                                    <div key={review.id} style={{
+                                        background: 'var(--bg-secondary)', padding: '1.25rem', borderRadius: '1rem',
+                                        border: '1px solid var(--glass-border)'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{
+                                                    width: '36px', height: '36px', borderRadius: '50%',
+                                                    background: 'var(--accent-light)', color: 'var(--accent)',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    fontWeight: '700', fontSize: '0.9rem', border: '1px solid var(--accent)'
+                                                }}>
+                                                    {review.username?.charAt(0).toUpperCase()}
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontWeight: '600', fontSize: '0.95rem' }}>{review.username}</div>
+                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                        {new Date(review.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {renderStars(review.rating, 14)}
+                                        </div>
+                                        {review.comment && (
+                                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: '1.6', margin: 0 }}>{review.comment}</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)', border: '1px dashed var(--glass-border)', borderRadius: '1rem' }}>
+                                No reviews yet. Be the first to review!
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div style={{ background: 'var(--bg-secondary)', padding: '2rem', borderRadius: 'var(--card-radius)', border: '1px solid var(--glass-border)', position: 'sticky', top: '100px' }}>
@@ -174,7 +344,7 @@ const CarDetails = () => {
                         <div style={{ textAlign: 'center', padding: '2rem 0' }}>
                             <CheckCircle size={64} color="var(--accent)" style={{ marginBottom: '1rem', marginInline: 'auto' }} />
                             <h2 style={{ marginBottom: '0.5rem' }}>Booking Confirmed!</h2>
-                            <p style={{ color: 'var(--text-secondary)' }}>Redirecting to your dashboard...</p>
+                            <p style={{ color: 'var(--text-secondary)' }}>Redirecting to payment...</p>
                         </div>
                     ) : (
                         <>

@@ -39,6 +39,27 @@ const initDb = () => {
       password TEXT NOT NULL,
       role TEXT DEFAULT 'user'
     );
+
+    CREATE TABLE IF NOT EXISTS reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      carId INTEGER NOT NULL,
+      userId INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+      comment TEXT,
+      createdAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (carId) REFERENCES cars (id),
+      FOREIGN KEY (userId) REFERENCES users (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS wishlist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId INTEGER NOT NULL,
+      carId INTEGER NOT NULL,
+      UNIQUE(userId, carId),
+      FOREIGN KEY (userId) REFERENCES users (id),
+      FOREIGN KEY (carId) REFERENCES cars (id)
+    );
   `);
 
   // Migration: Add columns if they don't exist
